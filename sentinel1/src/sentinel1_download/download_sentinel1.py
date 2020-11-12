@@ -14,77 +14,55 @@ import os
 import sys
 import datetime
 from time import sleep
+from sentinelsat import SentinelAPI, read_geojson, geojson_to_wkt
 
-sys.path.append('/exports/csce/datastore/geos/users/dmilodow/STFC/esa_sentinel')
-import sentinel_api as api
-from sentinelsat import SentinelAPI
-username = '<username>'
-pswd = '<password>'
-
-download_dir = '/disk/scratch/local.2/dmilodow/Sentinel1/GRDtiles/'
-sites = ['Ardfern1','Ardfern2','Arisaig','Auchteraw','GlenLoy','Mandally','Achdalieu']
-
-start_date = datetime.datetime.strptime('2019-04-01','%Y-%m-%d').date()
-end_date = datetime.datetime.strptime('2019-09-30','%Y-%m-%d').date()
-
+"""
+# code to convert shapefile to geojson for ingestion into sentinelsat api
+import geopandas as gpd
 for site in sites:
     if 'Ardfern' in site:
         site_shapefile = '/home/dmilodow/DataStore_DTM/STFC/DATA/EDINAAerial/%s_2015/%s_bbox_wgs84.shp' % (site,site)
     else:
         site_shapefile = '/home/dmilodow/DataStore_DTM/STFC/DATA/EDINAAerial/%s_2017/%s_bbox_wgs84.shp' % (site,site)
 
-    # please also specify the Hub URL:
-    # All Sentinel-1 and -2 scenes beginning from 15th Nov. 2015: https://scihub.copernicus.eu/apihub/
-    # All historic Sentinel-1 scenes: https://scihub.copernicus.eu/dhus/
-    s1 = api.SentinelDownloader(username, pswd, api_url='https://scihub.copernicus.eu/dhus/')
+        file = gpd.read_file(site_shapefile)
+        file.to_file('%s.json' % site_shapefile[:-4], driver="GeoJSON")
+"""
 
-    # set directory for
-    # - filter scenes list with existing files
-    # - set directory path for data download
-    s1.set_download_dir(download_dir)
+username = '<username>'
+pswd = '<password>'
+download_api = SentinelAPI(username, pswd, api_url='https://scihub.copernicus.eu/dhus/')
 
-    # load geometries from shapefile
-    s1.load_sites(site_shapefile)
+download_dir = '/disk/scratch/local.2/dmilodow/Sentinel1/GRDtiles/'
+sites = ['Ardfern1','Ardfern2','Arisaig','Auchteraw','GlenLoy','Mandally','Achdalieu']
 
-    # search for scenes with some restrictions (e.g., minimum overlap 1%)
-    s1.search('S1A*', min_overlap=0.9, start_date='%i-%i-%i' % (start_date.year, start_date.month, start_date.day),
-    end_date = '%i-%i-%i' % (end_date.year, end_date.month, end_date.day),
-    date_type='beginPosition',
-    productType='GRD', sensoroperationalmode='IW',
-    orbitdirection='Ascending',polarisationmode='VV VH')
+start_date = datetime.datetime.strptime('2019-04-01','%Y-%m-%d').date()
+end_date = datetime.datetime.strptime('2019-09-30','%Y-%m-%d').date()
+for site in sites:
+    if 'Ardfern' in site:
+        site_json = '/home/dmilodow/DataStore_DTM/STFC/DATA/EDINAAerial/%s_2015/%s_bbox_wgs84.json' % (site,site)
+    else:
+        site_json = '/home/dmilodow/DataStore_DTM/STFC/DATA/EDINAAerial/%s_2017/%s_bbox_wgs84.json' % (site,site)
 
-    s1.search('S1A*', min_overlap=0.9, start_date='%i-%i-%i' % (start_date.year, start_date.month, start_date.day),
-    end_date = '%i-%i-%i' % (end_date.year, end_date.month, end_date.day),date_type='beginPosition',
-    productType='GRD', sensoroperationalmode='IW',
-    orbitdirection='Descending',polarisationmode='VV VH')
+    footprint = geojson_to_wkt(read_geojson(site_json))
+    scenes = download_api.query(footprint,
+                     date = (start_date, end_date),
+                     productType='GRD',
+                     sensoroperationalmode='IW',
+                     polarisationmode='VV VH',
+                     platformname = 'Sentinel-1')
+                     #cloudcoverpercentage = (0, 30))
 
-    s1.search('S1B*', min_overlap=0.9, start_date='%i-%i-%i' % (start_date.year, start_date.month, start_date.day),
-    end_date = '%i-%i-%i' % (end_date.year, end_date.month, end_date.day),
-    date_type='beginPosition',
-    productType='GRD', sensoroperationalmode='IW',
-    orbitdirection='Ascending',polarisationmode='VV VH')
-
-    s1.search('S1B*', min_overlap=0.9, start_date='%i-%i-%i' % (start_date.year, start_date.month, start_date.day),
-    end_date = '%i-%i-%i' % (end_date.year, end_date.month, end_date.day),
-    date_type='beginPosition',
-    productType='GRD', sensoroperationalmode='IW',
-    orbitdirection='Descending',polarisationmode='VV VH')
-
-    # you can either write results to a bash file for wget or download files directly in this script
-    # s1.write_results('wget', 'sentinel_api_s1_download.sh')
-    #s1.download_all()
-    scenes = s1.get_scenes()
     scenes_retry = []
-    download_api = SentinelAPI(username, pswd, api_url='https://scihub.copernicus.eu/dhus/')
-    for scene in scenes:
+    for scene_id in scenes:
+        scene = scenes[scene_id]
         print('date: %s; scene: %s' % (scene['beginposition'][:10],scene['title']))
-        #download_api.download(scene['id'],directory_path=download_dir)
-        if not download_api.is_online(scene['id']):
+        if not download_api.is_online(scene_id):
             if not os.path.isfile('%s/%s.zip' % (download_dir,scene['title'])):
                 scenes_retry.append(scene)
         else:
             try:
-                download_api.download(scene['id'],directory_path=download_dir)
+                download_api.download(scene_id,directory_path=download_dir)
             except:
                 scenes_retry.append(scene)
 
@@ -101,8 +79,8 @@ for site in sites:
                 # if available, download now
                 try:
                     count+=1
-                    online=download_api.is_online(scene['id'])
-                    download_api.download(scene['id'],directory_path=download_dir)
+                    online=download_api.is_online(scene_id)
+                    download_api.download(scene_id,directory_path=download_dir)
                     if not online:
                         if os.path.isfile('%s/%s.zip' % (download_dir,scene['title'])):
                             scene_tested=True
@@ -114,8 +92,8 @@ for site in sites:
                     move_to_next_scene=True
                 except:
                     if count>2:
-                        if scene['id'] not in problem_scenes:
-                            problem_scenes.append(scene['id'])
+                        if scene_id not in problem_scenes:
+                            problem_scenes.append(scene_id)
                         move_to_next_scene=True
                     print('reached quota limit! Trying again in 10 minutes...',end='\r')
                     sleep(60*5)
@@ -142,12 +120,11 @@ for site in sites:
     # final check of downloads to ensure all downloaded
     for scene in scenes:
         print('date: %s; scene: %s' % (scene['beginposition'][:10],scene['title']))
-        #download_api.download(scene['id'],directory_path=download_dir)
-        if not download_api.is_online(scene['id']):
+        if not download_api.is_online(scene_id):
             if not os.path.isfile('%s/%s.zip' % (download_dir,scene['title'])):
                 scenes_retry.append(scene)
         else:
-            download_api.download(scene['id'],directory_path=download_dir)
+            download_api.download(scene_id,directory_path=download_dir)
 
 """
 sites = ['Achdalieu','Ardfern1','Ardfern2','Arisaig','Auchteraw','GlenLoy','Mandally']
